@@ -16,14 +16,14 @@ from pathlib import Path
 try:
     from google import genai
 except ImportError:
-    sys.exit("[ERROR]: google-genai is not installed. Run: pip install google-genai")
+    sys.exit("[ERROR] google-genai is not installed. Run: pip install google-genai")
 
 try:
     from dotenv import load_dotenv
     env_path = Path(__file__).parent / ".env"
     load_dotenv(dotenv_path=env_path)
 except ImportError:
-    print("[INFO]: python-dotenv not installed. Using system environment variables.")
+    print("[INFO] python-dotenv not installed. Using system environment variables.")
 
 SYSTEM_PROMPT = textwrap.dedent(
     """\
@@ -35,7 +35,7 @@ SYSTEM_PROMPT = textwrap.dedent(
     - 判断できない項目は null を入れる。推測で埋めない
     - コード記号は入力テキストの表記をそのまま使用する（正規化しない）
     - セクション名が明記されていない場合は構造から推測して英語で記入する
-      （例: intro / verse / pre-chorus / chorus / bridge / solo / outro）
+      （例: intro / verse / pre-chorus / chorus / interlude / bridge / solo / outro）
 
     ## 楽器レイヤー
     - 入力に楽器の指示がある場合のみ記録する（表記例: E.Gt / A.Gt / E.Ba / Dr / Vo）
@@ -44,12 +44,22 @@ SYSTEM_PROMPT = textwrap.dedent(
 
     ## コード長さ
     - "----" のようなリズム表記がある場合: "-" 1つ = 8分音符 = 0.5拍
-    - ない場合: 一つ前のコード進行の表記を継承。
+    - リズム表記がない場合: 直前の同じコード進行を持つセクションのリズムパターンをそのまま継承する
+    （例: イントロが G/B=2.0 / Cadd9=1.5 / Dsus4=0.5シンコペ なら、
+            同じコード進行のVerseも同じ拍割りで記録する）
     - N.C. は chord_symbol = "N.C." として記録
+    - N.C. の duration_beats も前後の "-" 表記から同様に計算すること
+    （例: "--N.C.--" なら N.C. 自体の長さ + 前後の "-" 分も N.C. に含める）
+    （例: "B7>= --N.C.--" → B7=0.5拍、N.C.=1.0拍）
 
     ## シンコペーション（小節跨ぎ）
     - 前の小節末尾（例: beat_position=4.5）に 0.5拍分のエントリを置く
     - 次の小節頭に同じコードを再エントリして残り時間を duration_beats に記録
+    - シンコペ継続エントリの chord_symbol は必ず前小節と同じコード名を入れること。null にしてはいけない
+
+    ## section_label
+    - 元テキストに「Aメロ」「サビ」「ギターソロ」等のラベルが明記されている場合は必ず記入する
+    - 明記されていない場合のみ null
 
     ## 転調
     - 曲全体のデフォルトは song_meta の key_root / key_mode に記録
@@ -117,7 +127,7 @@ SYSTEM_PROMPT = textwrap.dedent(
 def load_api_key():
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
-        sys.exit("[ERROR]: GEMINI_API_KEY is not set in .env or environment variables.")
+        sys.exit("[ERROR] GEMINI_API_KEY is not set in .env or environment variables.")
     return key
 
 def call_gemini(chord_text: str, model_name: str = "gemini-2.5-flash", retries: int = 3):
@@ -130,7 +140,7 @@ def call_gemini(chord_text: str, model_name: str = "gemini-2.5-flash", retries: 
 
     for attempt in range(1, retries + 1):
         try:
-            print(f"[INFO]: Calling Gemini API ({attempt}/{retries})")
+            print(f"[INFO] Calling Gemini API ({attempt}/{retries})")
             response = client.models.generate_content(
                 model=model_name,
                 contents=chord_text,
@@ -138,13 +148,13 @@ def call_gemini(chord_text: str, model_name: str = "gemini-2.5-flash", retries: 
             )
             return response.text
         except Exception as e:
-            print(f"[ERROR]: {e}")
+            print(f"[ERROR] {e}")
             if attempt < retries:
                 wait = 5 * attempt
                 print(f"Retrying in {wait} seconds...")
                 time.sleep(wait)
             else:
-                sys.exit(f"[ERROR]: API request failed.")
+                sys.exit(f"[ERROR] API request failed.")
 
 def parse_json_response(raw: str):
     try:
@@ -152,7 +162,7 @@ def parse_json_response(raw: str):
     except json.JSONDecodeError as e:
         debug_path = Path("debug_raw_response.txt")
         debug_path.write_text(raw, encoding="utf-8")
-        sys.exit(f"[ERROR]: {e}\n Saved to {debug_path}")
+        sys.exit(f"[ERROR] {e}\n Saved to {debug_path}")
 
 def resolve_output_path(input_path: Path | None):
     if input_path:
