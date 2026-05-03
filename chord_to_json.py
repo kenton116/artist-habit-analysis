@@ -135,7 +135,8 @@ def call_gemini(chord_text: str, model_name: str = "gemini-2.5-flash", retries: 
     
     config = {
         "system_instruction": SYSTEM_PROMPT,
-        "response_mime_type": "application/json"
+        "response_mime_type": "application/json",
+        "max_output_tokens": 65536
     }
 
     for attempt in range(1, retries + 1):
@@ -164,6 +165,20 @@ def parse_json_response(raw: str):
         debug_path.write_text(raw, encoding="utf-8")
         sys.exit(f"[ERROR] {e}\n Saved to {debug_path}")
 
+def strip_lyrics(data: dict):
+    for section in data.get('sections', []):
+        for chord in section.get('chords', []):
+            chord.pop('lyric_syllable', None)
+    return data
+
+def fix_syncopation(data: dict):
+    for section in data.get('sections', []):
+        chords = section.get('chords', [])
+        for i, c in enumerate(chords):
+            if c['chord_symbol'] is None and i > 0:
+                c['chord_symbol'] = chords[i - 1]['chord_symbol']
+    return data
+
 def resolve_output_path(input_path: Path | None):
     if input_path:
         return input_path.with_suffix(".json")
@@ -186,6 +201,8 @@ def main():
 
     raw_response = call_gemini(chord_text)
     result = parse_json_response(raw_response)
+    result = strip_lyrics(result)
+    result = fix_syncopation(result)
 
     output_path = resolve_output_path(input_path)
     output_path.write_text(
